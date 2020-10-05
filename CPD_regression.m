@@ -1,74 +1,66 @@
-function md = CPD_regression(opts)
+function results = CPD_regression(opts)
+%% init, get values from main
 
-p_val = 0.2; % Early stopping
+J = opts.I;                                      
+f_type = opts.f_type;                            
+tol = opts.tol;                                  
+max_itr = opts.max_itr;
+b = opts.b;
 
-I = opts.I;
-f_type = opts.f_type;
-[F_, mu_, mu_smooth_] = ndgrid(opts.F, opts.mu, opts.mu_smooth);
+[F_, mu_, mu_smooth_, I] = ndgrid(opts.F, opts.mu, opts.mu_smooth, opts.I); 
+comb_param = [F_(:), mu_(:), mu_smooth_(:), I(:)];    
 
-comb_param = [F_(:), mu_(:), mu_smooth_(:)];
-[n_samples, N] = size(opts.inputs_tr);
+[~, N] = size(opts.inputs_tr);
 
-% Discretize everything
-[inputs, I, ~] = N_discretize([opts.inputs_tr; opts.inputs_te], I, N, f_type, 'kmeans');
+opts_inner = cell(size(comb_param, 1),1);
 
-inputs_tr = inputs(1:n_samples, :);
+for i = 1:length(opts_inner)
+    opts_inner{i}.targets_vl = opts.targets_vl;
+    opts_inner{i}.targets_te = opts.targets_te;
+    opts_inner{i}.tr_ind = opts.tr_ind;
+    opts_inner{i}.vl_ind = opts.vl_ind;
+    opts_inner{i}.te_ind = opts.te_ind;
+end
+
 targets_tr = opts.targets_tr;
-inputs_te = inputs(n_samples + 1:end, :);
+
+%% init, pre-allocate with zeros
 
 X = cell(size(comb_param, 1), 1);
 b_out = cell(size(comb_param, 1), 1);
-valid_rmse = zeros(size(comb_param, 1), 1);
-test_rmse = zeros(size(comb_param, 1), 1);
+Out = cell(size(comb_param, 1), 1);
+I = cell(1,N);
 
-% Keep p_val as a validation set
-tol = opts.tol;
-max_itr = opts.max_itr;
-b = opts.b;
-opts_inner.inputs_te = inputs_te;
-opts_inner.targets_te = opts.targets_te;
-indices = randperm(n_samples);
-opts_inner.tr_ind = indices(1:floor((1-p_val)*n_samples));
-opts_inner.vl_ind = indices(floor((1-p_val)*n_samples)+1:end);
+inputs = cell(length(J),1);
+inputs_tr = cell(length(J),1);
+inputs_vl = cell(length(J),1);
+inputs_te = cell(length(J),1);
 
-pred_te = cell(size(comb_param, 1), 1);
-parfor i=1:size(comb_param, 1)
-    [X{i}, b_out{i}, Out] = csid(inputs_tr, targets_tr, comb_param(i, 1), I, ...
-      f_type, opts_inner, 'reg_fro', comb_param(i, 2), 'reg_smooth', comb_param(i, 3), ...
-      'max_itr', max_itr, 'tol', tol, 'bias', b, 'printitn', 200);
-    valid_rmse(i) = Out.best_rmse;
-    test_rmse(i) = Out.test_rmse;
-    pred_te{i} = Out.pred_te;
+%% Discretize data
+
+for i=1:length(J)
+    [inputs{i}, I{i}, ~] = N_discretize([opts.inputs_tr; opts.inputs_vl; opts.inputs_te], J(i), N, f_type, 'kmeans');
+    inputs_tr{i} = inputs{i,1}(opts_inner{1}.tr_ind, :);
+    inputs_vl{i} = inputs{i,1}(opts_inner{1}.vl_ind, :);
+    inputs_te{i} = inputs{i,1}(opts_inner{1}.te_ind, :);
 end
 
-md.X = X;
-md.b_out = b_out;
-md.valid_rmse = valid_rmse;
-[~, ind] = min(md.valid_rmse);
-md.test_rmse = test_rmse(ind);
-md.pred_te = pred_te{ind};
+for i = 1:size(comb_param,1)
+    opts_inner{i}.inputs_tr = inputs_tr{J == comb_param(i,4)};
+    opts_inner{i}.inputs_te = inputs_te{J == comb_param(i,4)};
+    opts_inner{i}.inputs_vl = inputs_vl{J == comb_param(i,4)}; 
 end
 
-function [inputs, I, partition] = N_discretize(inputs, d_int, N, f_type, d_type)
-fprintf('K-means clustering \n')
-I = zeros(1, N);
-partition = cell(N, 1);
-switch d_type
-    case 'kmeans'
-        for n=1:N
-            ind_non_nan = ~isnan(inputs(:, n));
-            if ~f_type(n)
-                n_uniq = length(unique(inputs(ind_non_nan, n)));
-                if n_uniq > d_int
-                    [~, C] = kmeans(inputs(ind_non_nan, n), d_int, 'Replicates', 10, 'MaxIter', 1000);
-                    [partition{n}, ~, ~] = lloyds(inputs(ind_non_nan, n), sort(C, 'ascend'));
-                    inputs(ind_non_nan, n) = quantiz(inputs(ind_non_nan, n), partition{n}) + 1;
-                else
-                    inputs(ind_non_nan ,n) = knnsearch(sort(unique(inputs(ind_non_nan, n)), 'ascend'), inputs(ind_non_nan, n));
-                end
-            end
-            I(n) = length(unique(inputs(ind_non_nan, n)));
-        end
+%parfor i=1:size(comb_param,1) % uncomment this line and comment the next one to run using MATLAB's parallel toolbox
+for i=1:size(comb_param,1)
+    [X{i}, b_out{i}, Out{i}] = csid(opts_inner{i}.inputs_tr, targets_tr, comb_param(i, 1), comb_param(i,4)*ones(1,size(inputs{1},2)), ...
+        f_type, opts_inner{i}, 'reg_fro', comb_param(i, 2), 'reg_smooth', comb_param(i, 3), ...
+        'max_itr', max_itr, 'tol', tol, 'bias', b, 'printitn', Inf);
 end
-fprintf('K-means clustering done \n')
+
+results.X = X;
+results.b_out = b_out;
+results.Out = Out;
+results.comb_param = comb_param;
+
 end
