@@ -1,5 +1,5 @@
-# Canonical-System-Identification
+# CSI-full-duplex
 
 Demo code for the paper:
 
-N. Kargas and N. D. Sidiropoulos, "Nonlinear System Identification via Tensor Completion", AAAI 2020, New York, NY.
+F. Jochems and A. Balatsoukas-Stimmng, "Non-Linear Self-Interference Cancellation via Tensor Completion", Asilomar Conference on Signals, Systems, and Computers, 2020.
